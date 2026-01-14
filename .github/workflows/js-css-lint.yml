@@ -1,12 +1,69 @@
 name: JS and CSS Linting
 
-on: [pull_request, workflow_dispatch]
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to use (defaults to 20)"
+        required: false
+        type: string
+        default: "20"
 
 permissions:
   contents: read
-
 jobs:
-  js-css-linting:
-    uses: bcgov/des-git-workflows/.github/workflows/js-css-lint.yml@1.2.0
-    with:
-      node_version: "24" # Will use the latest available Node.js 24.x version
+  lint:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          echo "=== Environment Info ==="
+          echo "Node version: $(node --version)"
+          echo "npm version: $(npm --version)"
+          echo "Working directory: $(pwd)"
+          echo ""
+          echo "=== Checking package-lock.json ==="
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json exists"
+            LOCKFILE_VERSION=$(cat package-lock.json | jq -r '.lockfileVersion' 2>/dev/null || echo 'jq not available')
+            echo "Lockfile version: $LOCKFILE_VERSION"
+            echo "Checking for ajv entries..."
+            grep -c '"node_modules/ajv"' package-lock.json || echo "No ajv entries found"
+          else
+            echo "ERROR: package-lock.json not found"
+            exit 1
+          fi
+          echo ""
+          echo "=== Cleaning npm cache ==="
+          npm cache clean --force
+          echo ""
+          echo "=== Running npm ci ==="
+          npm ci
+          echo ""
+          echo "=== Installing dependencies in subdirectories ==="
+          for dir in $(find . -type f -name "package.json" -not -path "*/node_modules/*" -exec dirname {} \;); do
+            if [ "$dir" != "." ]; then
+              echo "Installing dependencies in $dir"
+              cd $dir
+              npm cache clean --force
+              npm ci
+              cd -
+            fi
+          done
+
+      - name: Lint CSS
+        run: npm run lint:css
+
+      - name: Lint JS
+        run: npm run lint:js
